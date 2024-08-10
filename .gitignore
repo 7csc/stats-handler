@@ -20,3 +20,27 @@
 # Go workspace file
 go.work
 go.work.sum
+
+
+# macOS システムファイル
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# macOS で生成される ._ ファイル
+._*
+
+# アップルダブルファイル
+.Spotlight-V100
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# macOSで作成される一時ファイル
+.fseventsd
+.TemporaryItems
+.apdisk
+
+# macOSで生成される一時ファイル
+*.swp
+*.swo
