@@ -2,77 +2,80 @@ package stats
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
+	"os"
 	"runtime"
-	"strconv"
-	"sync"
+	"syscall"
 	"time"
 )
 
 type Stats struct {
-	Time             int64  `json:"time"`
-	Version          string `json:"go_version"`
-	OS               string `json:"go_os"`
-	Arch             string `json:"go_arch"`
-	CPUs             int    `json:"cpus"`
-	GoroutineNum     int    `json:"goroutine_num"`
-	MemoryAlloc      uint64 `json:"memory_alloc"`
-	MemoryTotalAlloc uint64 `json:"memory_total_alloc"`
-	MemorySys        uint64 `json:"memory_sys"`
+	Time              int64             `json:"time"`
+	Version           string            `json:"go_version"`
+	OS                string            `json:"go_os"`
+	Arch              string            `json:"go_arch"`
+	CPUs              int               `json:"cpus"`
+	GoroutineNum      int               `json:"goroutine_num"`
+	MemoryAlloc       uint64            `json:"memory_alloc"`
+	MemoryTotalAlloc  uint64            `json:"memory_total_alloc"`
+	MemorySys         uint64            `json:"memory_sys"`
+	MemoryUsage       float64           `json:"memory_usage_percent"`
+	FileDescriptorNum int               `json:"file_descriptor_num"`
+	EnvVars           map[string]string `json:"env_vars"`
+	Uptime            int64             `json:"uptime"`
 }
 
-var mux sync.Mutex
+var startTime = time.Now().UnixNano()
 
 func CollectStats() *Stats {
-	mux.Lock()
-	defer mux.Unlock()
-
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 
-	now := time.Now()
+	totalMemory := mem.Sys
+	usedMemory := mem.Alloc
+	memoryUsage := (float64(usedMemory) / float64(totalMemory)) * 100
 
-	return &Stats{
-		Time:             now.UnixNano(),
-		Version:          runtime.Version(),
-		OS:               runtime.GOOS,
-		Arch:             runtime.GOARCH,
-		CPUs:             runtime.NumCPU(),
-		GoroutineNum:     runtime.NumGoroutine(),
-		MemoryAlloc:      mem.Alloc,
-		MemoryTotalAlloc: mem.TotalAlloc,
-		MemorySys:        mem.Sys,
+	var rLimit syscall.Rlimit
+	syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	fdUsage := int(rLimit.Cur) - int(rLimit.Max)
+
+	envVars := make(map[string]string)
+	for _, e := range os.Environ() {
+		pair := splitEnvVar(e)
+		envVars[pair[0]] = pair[1]
 	}
 
+	return &Stats{
+		Time:              time.Now().UnixNano(),
+		Version:           runtime.Version(),
+		OS:                runtime.GOOS,
+		Arch:              runtime.GOARCH,
+		CPUs:              runtime.NumCPU(),
+		GoroutineNum:      runtime.NumGoroutine(),
+		MemoryAlloc:       mem.Alloc,
+		MemoryTotalAlloc:  mem.TotalAlloc,
+		MemorySys:         mem.Sys,
+		MemoryUsage:       memoryUsage,
+		FileDescriptorNum: fdUsage,
+		EnvVars:           envVars,
+		Uptime:            (time.Now().UnixNano() - startTime) / int64(time.Second),
+	}
+}
+
+func splitEnvVar(env string) []string {
+	for i := 0; i < len(env); i++ {
+		if env[i] == '=' {
+			return []string{env[:i], env[i+1:]}
+		}
+	}
+	return []string{env, ""}
 }
 
 func Handler(w http.ResponseWriter, r *http.Request) {
-	var jsonBytes []byte
-	var jsonErr error
+	stats := CollectStats()
 
-	var body string
-
-	jsonBytes, jsonErr = json.Marshal(CollectStats())
-
-	if jsonErr != nil {
-		body = jsonErr.Error()
-	} else {
-		body = string(jsonBytes)
+	w.Header().Set("Context-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-
-	headers := make(map[string]string)
-	headers["Content-Type"] = "application/json"
-	headers["Content-Length"] = strconv.Itoa(len(body))
-	for name, val := range headers {
-		w.Header().Set(name, val)
-	}
-
-	if jsonErr != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
-
-	io.WriteString(w, body)
 }
