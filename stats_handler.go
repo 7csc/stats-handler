@@ -2,10 +2,10 @@ package stats
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"runtime"
-	"syscall"
 	"time"
 )
 
@@ -25,9 +25,16 @@ type Stats struct {
 	Uptime            int64             `json:"uptime"`
 }
 
-var startTime = time.Now().UnixNano()
+var startTime int64
+
+func StartTimeInit() {
+	startTime = time.Now().UnixNano()
+}
 
 func CollectStats() *Stats {
+	if startTime == 0 {
+		StartTimeInit()
+	}
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 
@@ -35,9 +42,7 @@ func CollectStats() *Stats {
 	usedMemory := mem.Alloc
 	memoryUsage := (float64(usedMemory) / float64(totalMemory)) * 100
 
-	var rLimit syscall.Rlimit
-	syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-	fdUsage := int(rLimit.Cur) - int(rLimit.Max)
+	fdUsage := getFileDescriptorCount()
 
 	envVars := make(map[string]string)
 	for _, e := range os.Environ() {
@@ -58,7 +63,23 @@ func CollectStats() *Stats {
 		MemoryUsage:       memoryUsage,
 		FileDescriptorNum: fdUsage,
 		EnvVars:           envVars,
-		Uptime:            (time.Now().UnixNano() - startTime) / int64(time.Second),
+		Uptime:            (time.Now().UnixNano() - startTime) / int64(time.Nanosecond),
+	}
+}
+
+func getFileDescriptorCount() int {
+	if runtime.GOOS == "linux" {
+		fdDir := "/proc/self/fd/"
+		fdFiles, err := os.ReadDir(fdDir)
+		if err == nil {
+			return len(fdFiles)
+		} else {
+			log.Printf("Error reading /proc/self/fd/: %v", err)
+			return -1
+		}
+	} else {
+		log.Printf("File descriptor count is not supported on this platform: %v", runtime.GOOS)
+		return -1
 	}
 }
 

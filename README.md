@@ -70,6 +70,8 @@ func main() {
   
 Once the server is running, you can access the API endpoint by sending a GET request to `http://(localhost):8080/stats`.  
   
+Note: When integrating the stats handler into your main server, ensure that the main server's port configuration 
+
 ## API Response  
 The API will return a JSON response with the following structure:  
   
@@ -93,12 +95,7 @@ The API will return a JSON response with the following structure:
     "uptime": 3600
 }  
 ```
-  
-## Environment Variables  
-You can configure the server with the following environment variables:  
-  
-- `PORT`: The port number on which the server will listen. Default is `8080`.  
-  
+ 
 ## Contributing  
 Contributions are welcome! Please submit a pull request or open an issue if you have suggestions or improvements.  
   
