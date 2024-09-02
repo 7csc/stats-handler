@@ -49,7 +49,7 @@ package main
 import (
     "net/http"
     "github.com/go-chi/chi/v5"
-    "your_module_path/stats"
+    "github.com/7csc/stats-handler/stats"
 )
 
 func main() {
