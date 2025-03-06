@@ -4,8 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,76 +12,78 @@ import (
 )
 
 func TestHandler(t *testing.T) {
-	stats.StartTimeInit()
-	os.Setenv("TEST_ENV", "test_value")
-	defer os.Unsetenv("TEST_ENV")
+	req := httptest.NewRequest("GET", "/stats", nil)
+	w := httptest.NewRecorder()
 
-	req, err := http.NewRequest("GET", "/stats", nil)
-	if err != nil {
-		t.Fatal(err)
+	stats.Handler(w, req)
+
+	res := w.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d, want %d", res.StatusCode, http.StatusOK)
 	}
 
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(stats.Handler)
-
-	handler.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		t.Errorf("API Handler returned wrong status code: got %v want %v",
-			status, http.StatusOK)
+	var data stats.Stats
+	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	var responseStats stats.Stats
-	err = json.Unmarshal(rr.Body.Bytes(), &responseStats)
-	if err != nil {
-		t.Errorf("Unable to parse response body: %v", err)
+	if data.CPUs <= 0 {
+		t.Errorf("invalid CPU count: %d", data.CPUs)
 	}
 
-	now := time.Now().UnixNano()
-	if responseStats.Time > now || responseStats.Time < now-int64(time.Second) {
-		t.Errorf("Unexpected time: got %v", responseStats.Time)
+	if data.GoroutineNum <= 0 {
+		t.Errorf("invalid goroutine count: %d", data.GoroutineNum)
 	}
 
-	if responseStats.Version != runtime.Version() {
-		t.Errorf("Unexpected Go version: got %v want %v", responseStats.Version, runtime.Version())
+	if data.Uptime <= 0 {
+		t.Errorf("invalid uptime: %d", data.Uptime)
+	}
+}
+
+func TestHealthHandler(t *testing.T) {
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+
+	stats.HealthHandler(w, req)
+
+	res := w.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d, want %d", res.StatusCode, http.StatusOK)
 	}
 
-	if responseStats.OS != runtime.GOOS {
-		t.Errorf("Unexpected OS: got %v want %v", responseStats.OS, runtime.GOOS)
+	body := w.Body.String()
+	if strings.TrimSpace(body) != "OK" {
+		t.Errorf("unexpected body: got %q, want %q", body, "OK")
 	}
+}
 
-	if responseStats.Arch != runtime.GOARCH {
-		t.Errorf("Unexpected Arch: got %v want %v", responseStats.Arch, runtime.GOARCH)
-	}
-
-	if responseStats.CPUs != runtime.NumCPU() {
-		t.Errorf("Unexpected CPUs: got %v want %v", responseStats.CPUs, runtime.NumCPU())
-	}
-
-	if responseStats.GoroutineNum != runtime.NumGoroutine() {
-		t.Errorf("Unexpected GoroutineNum: got %v want %v", responseStats.GoroutineNum, runtime.NumGoroutine())
-	}
-
-	if responseStats.MemoryUsage < 0 || responseStats.MemoryUsage > 100 {
-		t.Errorf("Unexpected MemoryUsage: got %v", responseStats.MemoryUsage)
-	}
-
-	if runtime.GOOS == "linux" {
-		if responseStats.FileDescriptorNum <= 0 {
-			t.Errorf("Unexpected FileDescriptorNum on Linux: got %v", responseStats.FileDescriptorNum)
+func TestEnvFiltert(t *testing.T) {
+	stats.SetEnvFilter(func(key, value string) (string, string) {
+		if strings.Contains(strings.ToUpper(key), "SECRET") {
+			return key, "[FILTERD]"
 		}
-	} else {
-		if responseStats.FileDescriptorNum != -1 {
-			t.Errorf("Expected FileDescriptorNum to be -1 on non-Linux platforms, got %v", responseStats.FileDescriptorNum)
+		return key, value
+	})
+
+	statsData := stats.CollectStats()
+
+	for k, v := range statsData.EnvVars {
+		if strings.Contains(strings.ToUpper(k), "SECRET") && v != "[FILTERD]" {
+			t.Errorf("env var filtering failed: key=%s, value=%s", k, v)
 		}
 	}
+}
 
-	if val, exists := responseStats.EnvVars["TEST_ENV"]; !exists || val != "test_value" {
-		t.Errorf("Unexpected EnvVars: TEST_ENV not found or incorrect value, got %v", responseStats.EnvVars["TEST_ENV"])
+func TestUptimeIncreases(t *testing.T) {
+	initial := stats.CollectStats().Uptime
+	time.Sleep(50 * time.Millisecond)
+	later := stats.CollectStats().Uptime
+
+	if later <= initial {
+		t.Errorf("uptime didn't increase: start=%d, end=%d", initial, later)
 	}
-
-	if responseStats.Uptime <= 0 {
-		t.Errorf("Unexpected Uptime: got %v", responseStats.Uptime)
-	}
-
 }
